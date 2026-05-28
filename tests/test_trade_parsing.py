@@ -1,4 +1,12 @@
-from main import agg_key, aggregate_trades, get_direction, get_taker, notional, ZERO_HASH
+from main import (
+    agg_key,
+    aggregate_trades,
+    get_direction,
+    get_taker,
+    notional,
+    validate_trade,
+    ZERO_HASH,
+)
 
 
 def _make_trade(
@@ -124,3 +132,35 @@ def test_aggregate_taker_from_first_trade():
     ]
     agg = aggregate_trades(trades)
     assert agg["_taker"] == "0xFirst"
+
+
+# --- Trade validation ---
+
+def test_validate_trade_valid_buy():
+    assert validate_trade(_make_trade(side="B")) is True
+
+
+def test_validate_trade_valid_sell():
+    assert validate_trade(_make_trade(side="A")) is True
+
+
+def test_validate_trade_invalid_side():
+    assert validate_trade(_make_trade(side="X")) is False
+
+
+def test_validate_trade_missing_side():
+    trade = _make_trade()
+    del trade["side"]
+    assert validate_trade(trade) is False
+
+
+def test_validate_trade_wrong_users_count():
+    trade = _make_trade()
+    trade["users"] = ["0xOnly"]
+    assert validate_trade(trade) is False
+
+
+def test_validate_trade_empty_users():
+    trade = _make_trade()
+    trade["users"] = []
+    assert validate_trade(trade) is False

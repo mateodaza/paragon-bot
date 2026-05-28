@@ -69,6 +69,13 @@ def test_title_strict_open():
     assert "**New Paragon Position!**" in msg
 
 
+def test_title_position_increased():
+    msg = format_message(
+        "para:BTCD", "LONG", 100.0, "5", "Paragon Position Increased!"
+    )
+    assert "**Paragon Position Increased!**" in msg
+
+
 def test_no_tx_link_by_default():
     msg = format_message(
         "para:BTCD", "LONG", 100.0, "5", "Paragon Trade!", tx_hash="0xabc"

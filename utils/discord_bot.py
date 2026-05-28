@@ -3,7 +3,7 @@ import os
 import hikari
 from dotenv import load_dotenv
 
-from configs.tickers import display_name, trade_url
+from configs.tickers import display_name
 
 load_dotenv()
 
@@ -23,22 +23,23 @@ async def send_message_to_channel(
     tx_hash: str | None = None,
 ):
     rest = hikari.RESTApp()
-    await rest.start()
+    try:
+        await rest.start()
 
-    message = format_message(
-        coin, direction, notional_usd, leverage, title, tx_hash
-    )
-    color = (
-        hikari.Color(0x00CC66) if direction == "LONG" else hikari.Color(0xFF4444)
-    )
-
-    async with rest.acquire(DISCORD_BOT_TOKEN, "Bot") as client:
-        await client.create_message(
-            CHANNEL_ID,
-            embed=hikari.Embed(description=message, color=color),
+        message = format_message(
+            coin, direction, notional_usd, leverage, title, tx_hash
+        )
+        color = (
+            hikari.Color(0x00CC66) if direction == "LONG" else hikari.Color(0xFF4444)
         )
 
-    await rest.close()
+        async with rest.acquire(DISCORD_BOT_TOKEN, "Bot") as client:
+            await client.create_message(
+                CHANNEL_ID,
+                embed=hikari.Embed(description=message, color=color),
+            )
+    finally:
+        await rest.close()
 
 
 def format_message(
@@ -66,9 +67,6 @@ def format_message(
     ]
 
     if INCLUDE_TX_LINK and tx_hash:
-        url = trade_url(coin)
         lines.append(f"[TX](https://app.hyperliquid.xyz/explorer/tx/{tx_hash})")
-    elif tx_hash and not INCLUDE_TX_LINK:
-        pass
 
     return "\n".join(lines)
