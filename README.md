@@ -67,16 +67,21 @@ uv run --extra dev pytest
 
 ### Railway (recommended)
 
-Easiest option — no server management, ~$5/mo. Connect your GitHub repo, add env vars in the dashboard, done.
+Easiest option — no server management, ~$5/mo. This is a background worker (no web port or public domain needed).
 
 1. Push this repo to GitHub
 2. Go to [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub repo**
 3. Add `DISCORD_BOT_TOKEN` and `CHANNEL_ID` in **Variables**
-4. Railway auto-detects Python and runs the bot
+4. Set **Start Command** in service settings to: `uv run python main.py`
 
-Add a `Procfile` to the repo root:
-```
-worker: uv run python main.py
+Or commit a `railway.json` to the repo root:
+```json
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "deploy": {
+    "startCommand": "uv run python main.py"
+  }
+}
 ```
 
 ### VPS (systemd)
