@@ -4,25 +4,37 @@ Discord bot that monitors [Paragon](https://paragon.trade) perpetual trades on H
 
 Tracks: **BTC.D**, **AVGO**, **OTHERS**, **TOTAL2**
 
-## Setup
+No Hyperliquid API key needed — all endpoints are public.
+
+## Prerequisites
+
+- Python 3.12+
+- [uv](https://docs.astral.sh/uv/) (Rust-based Python package manager)
 
 ```bash
-# Install uv (if needed)
 curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Clone and configure
-git clone <repo-url> && cd paragon-bot
-cp .env.example .env
-# Edit .env with your Discord bot token and channel ID
 ```
 
-## Run
+## Discord Bot Setup
+
+1. Go to [Discord Developer Portal](https://discord.com/developers/applications) → **New Application** → name it (e.g. "Paragon Trades")
+2. Go to **Bot** tab → **Reset Token** → copy the token → this is your `DISCORD_BOT_TOKEN`
+3. Under **Bot** → **Privileged Gateway Intents** → nothing extra needed (we use REST, not gateway)
+4. Go to **OAuth2** → **URL Generator** → check **bot** scope → check **Send Messages** permission
+5. Copy the generated URL → open it in browser → invite the bot to your server
+6. In Discord: **Settings → Advanced → Enable Developer Mode** → right-click the target channel → **Copy Channel ID** → this is your `CHANNEL_ID`
+
+## Install & Run
 
 ```bash
-# Smoke test — verifies API connectivity and message formatting
+git clone <repo-url> && cd paragon-bot
+cp .env.example .env
+# Paste DISCORD_BOT_TOKEN and CHANNEL_ID into .env
+
+# Smoke test — verifies Hyperliquid API + WS connectivity, exits nonzero on failure
 uv run python main.py --dry-run --once
 
-# Dry run — prints to terminal instead of Discord
+# Dry run — streams live trades to terminal (no Discord posting)
 uv run python main.py --dry-run
 
 # Production
@@ -39,11 +51,11 @@ uv run pytest
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `DISCORD_BOT_TOKEN` | Yes | — | Discord bot token |
-| `CHANNEL_ID` | Yes | — | Discord channel ID |
-| `MIN_NOTIONAL_USD` | No | `100` | Minimum trade size to notify |
-| `MAX_EMOJIS` | No | `80` | Max ⚡️ per message |
-| `INCLUDE_TX_LINK` | No | `false` | Include Hyperliquid TX link (exposes wallet) |
+| `DISCORD_BOT_TOKEN` | Yes | — | From Discord Developer Portal → Bot → Token |
+| `CHANNEL_ID` | Yes | — | Right-click channel → Copy Channel ID |
+| `MIN_NOTIONAL_USD` | No | `100` | Minimum trade size (USD) to trigger a notification |
+| `MAX_EMOJIS` | No | `80` | Max ⚡️ emojis per message |
+| `INCLUDE_TX_LINK` | No | `false` | Include Hyperliquid TX link (exposes wallet activity) |
 | `POSITION_MODE` | No | `trade_activity` | `trade_activity` or `strict_open` |
 
 ### Position Modes
@@ -78,5 +90,5 @@ WantedBy=multi-user.target
 sudo systemctl daemon-reload
 sudo systemctl enable paragon-bot
 sudo systemctl start paragon-bot
-journalctl -fu paragon-bot  # logs
+journalctl -fu paragon-bot  # tail logs
 ```
