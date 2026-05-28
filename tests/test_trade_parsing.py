@@ -1,6 +1,7 @@
 from main import (
     agg_key,
     aggregate_trades,
+    classify_position,
     get_direction,
     get_taker,
     notional,
@@ -164,3 +165,49 @@ def test_validate_trade_empty_users():
     trade = _make_trade()
     trade["users"] = []
     assert validate_trade(trade) is False
+
+
+# --- Position classification (strict_open) ---
+
+def test_classify_open_long_from_flat():
+    assert classify_position("Open Long", "0.0") == "New Paragon Position!"
+
+
+def test_classify_open_short_from_flat():
+    assert classify_position("Open Short", "0.0") == "New Paragon Position!"
+
+
+def test_classify_open_long_from_zero():
+    assert classify_position("Open Long", "0") == "New Paragon Position!"
+
+
+def test_classify_open_long_adding():
+    assert classify_position("Open Long", "500.0") == "Paragon Position Increased!"
+
+
+def test_classify_open_short_adding():
+    assert classify_position("Open Short", "200.0") == "Paragon Position Increased!"
+
+
+def test_classify_flip_long_to_short():
+    assert classify_position("Long > Short", "500.0") == "Paragon Position Flipped!"
+
+
+def test_classify_flip_short_to_long():
+    assert classify_position("Short > Long", "300.0") == "Paragon Position Flipped!"
+
+
+def test_classify_close_long_skipped():
+    assert classify_position("Close Long", "500.0") is None
+
+
+def test_classify_close_short_skipped():
+    assert classify_position("Close Short", "500.0") is None
+
+
+def test_classify_none_fill_skipped():
+    assert classify_position(None, "") is None
+
+
+def test_classify_unknown_dir_skipped():
+    assert classify_position("SomeNewDir", "0.0") is None

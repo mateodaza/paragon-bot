@@ -5,6 +5,7 @@ import os
 import sys
 import time
 
+import websockets.exceptions
 from dotenv import load_dotenv
 from rich import print
 from rich.traceback import install
@@ -18,16 +19,11 @@ load_dotenv()
 install()
 
 HYPERLIQUID_WS = "wss://api.hyperliquid.xyz/ws"
-
-MIN_NOTIONAL_USD = float(os.getenv("MIN_NOTIONAL_USD", "100"))
-POSITION_MODE = os.getenv("POSITION_MODE", "trade_activity")
 AGGREGATE_WINDOW_S = 0.5
-
 ZERO_HASH = "0x" + "0" * 64
 
 _OPEN_DIRS = {"Open Long", "Open Short", "Long > Short", "Short > Long"}
 _FLIP_DIRS = {"Long > Short", "Short > Long"}
-_SKIP_DIRS = {"Close Long", "Close Short"}
 
 
 def parse_args():
@@ -43,6 +39,52 @@ def parse_args():
         help="Run smoke test (fetch meta, format sample message) and exit",
     )
     return parser.parse_args()
+
+
+# ---------------------------------------------------------------------------
+# Config validation
+# ---------------------------------------------------------------------------
+
+def validate_config(require_discord: bool = True) -> dict:
+    """Validate env vars at startup. Returns parsed config or exits."""
+    errors: list[str] = []
+
+    mode = os.getenv("POSITION_MODE", "trade_activity")
+    if mode not in ("trade_activity", "strict_open"):
+        errors.append(
+            f"POSITION_MODE must be 'trade_activity' or 'strict_open', got '{mode}'"
+        )
+
+    min_usd_raw = os.getenv("MIN_NOTIONAL_USD", "100")
+    try:
+        min_usd = float(min_usd_raw)
+    except ValueError:
+        errors.append(f"MIN_NOTIONAL_USD must be a number, got '{min_usd_raw}'")
+        min_usd = 100.0
+
+    max_emoji_raw = os.getenv("MAX_EMOJIS", "80")
+    try:
+        int(max_emoji_raw)
+    except ValueError:
+        errors.append(f"MAX_EMOJIS must be a number, got '{max_emoji_raw}'")
+
+    if require_discord:
+        if not os.getenv("DISCORD_BOT_TOKEN"):
+            errors.append("DISCORD_BOT_TOKEN is not set")
+
+        channel_raw = os.getenv("CHANNEL_ID", "")
+        if not channel_raw:
+            errors.append("CHANNEL_ID is not set")
+        elif not channel_raw.isdigit():
+            errors.append(f"CHANNEL_ID must be a number, got '{channel_raw}'")
+
+    if errors:
+        print("[bold red]Configuration errors:[/bold red]")
+        for e in errors:
+            print(f"[red]  • {e}[/red]")
+        sys.exit(1)
+
+    return {"position_mode": mode, "min_notional_usd": min_usd}
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +110,21 @@ def get_direction(trade: dict) -> str:
 
 def notional(trade: dict) -> float:
     return float(trade.get("px", 0)) * float(trade.get("sz", 0))
+
+
+# ---------------------------------------------------------------------------
+# Position classification (strict_open mode)
+# ---------------------------------------------------------------------------
+
+def classify_position(fill_dir: str | None, start_position: str) -> str | None:
+    """Returns title string for the Discord message, or None to skip."""
+    if fill_dir is None or fill_dir not in _OPEN_DIRS:
+        return None
+    if fill_dir in _FLIP_DIRS:
+        return "Paragon Position Flipped!"
+    if start_position in ("0.0", "0", ""):
+        return "New Paragon Position!"
+    return "Paragon Position Increased!"
 
 
 # ---------------------------------------------------------------------------
@@ -101,26 +158,31 @@ def aggregate_trades(trades: list[dict]) -> dict:
     }
 
 
+async def _subscribe_all(ws):
+    for coin in COINS:
+        await ws.send(json.dumps({
+            "method": "subscribe",
+            "subscription": {"type": "trades", "coin": coin},
+        }))
+
+
 # ---------------------------------------------------------------------------
 # Main event loop
 # ---------------------------------------------------------------------------
 
-async def trade_monitor(dry_run: bool = False):
+async def trade_monitor(config: dict, dry_run: bool = False):
+    position_mode = config["position_mode"]
+    min_notional = config["min_notional_usd"]
+
     while True:
         try:
             async with connect(HYPERLIQUID_WS) as ws:
-                for coin in COINS:
-                    sub = {
-                        "method": "subscribe",
-                        "subscription": {"type": "trades", "coin": coin},
-                    }
-                    await ws.send(json.dumps(sub))
-
+                await _subscribe_all(ws)
                 print("[green]Connected to Hyperliquid WS — monitoring Paragon trades")
 
                 pending: dict[str, dict] = {}
 
-                async def flush_pending():
+                def flush_pending():
                     now = time.time()
                     ready = []
                     expired = [
@@ -135,7 +197,7 @@ async def trade_monitor(dry_run: bool = False):
 
                 async def process_aggregated(agg: dict):
                     total = agg["_notional"]
-                    if total < MIN_NOTIONAL_USD:
+                    if total < min_notional:
                         return
 
                     coin = agg["coin"]
@@ -146,21 +208,15 @@ async def trade_monitor(dry_run: bool = False):
 
                     title = "Paragon Trade!"
 
-                    if POSITION_MODE == "strict_open":
+                    if position_mode == "strict_open":
                         fill = await get_fill_info(
                             taker, coin, trade_time, tx_hash, agg["side"]
                         )
-                        if fill is None:
+                        fill_dir = fill["dir"] if fill else None
+                        start_pos = fill["start_position"] if fill else ""
+                        title = classify_position(fill_dir, start_pos)
+                        if title is None:
                             return
-                        fill_dir = fill["dir"]
-                        if fill_dir in _SKIP_DIRS or fill_dir not in _OPEN_DIRS:
-                            return
-                        if fill_dir in _FLIP_DIRS:
-                            title = "Paragon Position Flipped!"
-                        elif fill["start_position"] in ("0.0", "0", ""):
-                            title = "New Paragon Position!"
-                        else:
-                            title = "Paragon Position Increased!"
 
                     leverage = await get_leverage(taker, coin)
 
@@ -172,19 +228,27 @@ async def trade_monitor(dry_run: bool = False):
                         print(msg)
                         print(f"{'='*50}\n")
                     else:
-                        await send_message_to_channel(
-                            coin, direction, total, leverage, title, tx_hash
-                        )
+                        try:
+                            await send_message_to_channel(
+                                coin, direction, total, leverage, title, tx_hash
+                            )
+                        except Exception as e:
+                            print(f"[red]Discord error: {type(e).__name__}: {e}[/red]")
 
                 while True:
                     try:
                         raw = await asyncio.wait_for(ws.recv(), timeout=1.0)
                     except TimeoutError:
-                        for agg in await flush_pending():
+                        for agg in flush_pending():
                             await process_aggregated(agg)
                         continue
 
-                    data = json.loads(raw)
+                    try:
+                        data = json.loads(raw)
+                    except json.JSONDecodeError:
+                        print("[yellow]Skipping malformed WS message[/yellow]")
+                        continue
+
                     if data.get("channel") != "trades":
                         continue
 
@@ -206,11 +270,16 @@ async def trade_monitor(dry_run: bool = False):
                         pending[key]["trades"].append(trade)
                         pending[key]["last_seen"] = time.time()
 
-                    for agg in await flush_pending():
+                    for agg in flush_pending():
                         await process_aggregated(agg)
 
+        except (websockets.exceptions.ConnectionClosed, OSError) as e:
+            print(f"[red]WebSocket connection lost: {e}. Reconnecting in 5s...[/red]")
+            await asyncio.sleep(5)
         except Exception as e:
-            print(f"[red]WebSocket error: {e}. Reconnecting in 5s...")
+            print(f"[red]Unexpected error: {type(e).__name__}: {e}[/red]")
+            import traceback
+            traceback.print_exc()
             await asyncio.sleep(5)
 
 
@@ -221,11 +290,7 @@ async def trade_monitor(dry_run: bool = False):
 async def _fetch_one_trade(timeout_s: float = 15) -> dict | None:
     """Returns a trade dict on success, None on clean timeout. Raises on connection error."""
     async with connect(HYPERLIQUID_WS) as ws:
-        for coin in COINS:
-            await ws.send(json.dumps({
-                "method": "subscribe",
-                "subscription": {"type": "trades", "coin": coin},
-            }))
+        await _subscribe_all(ws)
         try:
             while True:
                 raw = await asyncio.wait_for(ws.recv(), timeout=timeout_s)
@@ -298,10 +363,14 @@ async def smoke_test() -> int:
 
 async def main():
     args = parse_args()
+
     if args.once:
+        validate_config(require_discord=False)
         code = await smoke_test()
         sys.exit(code)
-    await trade_monitor(dry_run=args.dry_run)
+
+    config = validate_config(require_discord=not args.dry_run)
+    await trade_monitor(config, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

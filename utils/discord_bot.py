@@ -1,17 +1,27 @@
 import os
 
 import hikari
-from dotenv import load_dotenv
 
 from configs.tickers import display_name
 
-load_dotenv()
-
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-CHANNEL_ID = os.getenv("CHANNEL_ID")
 
-MAX_EMOJIS = int(os.getenv("MAX_EMOJIS", "80"))
+_channel_raw = os.getenv("CHANNEL_ID", "0") or "0"
+CHANNEL_ID = int(_channel_raw) if _channel_raw.isdigit() else 0
+
+_max_raw = os.getenv("MAX_EMOJIS", "80") or "80"
+MAX_EMOJIS = int(_max_raw) if _max_raw.isdigit() else 80
 INCLUDE_TX_LINK = os.getenv("INCLUDE_TX_LINK", "false").lower() == "true"
+
+_rest: hikari.RESTApp | None = None
+
+
+async def _get_rest() -> hikari.RESTApp:
+    global _rest
+    if _rest is None:
+        _rest = hikari.RESTApp()
+        await _rest.start()
+    return _rest
 
 
 async def send_message_to_channel(
@@ -22,24 +32,20 @@ async def send_message_to_channel(
     title: str,
     tx_hash: str | None = None,
 ):
-    rest = hikari.RESTApp()
-    try:
-        await rest.start()
+    rest = await _get_rest()
 
-        message = format_message(
-            coin, direction, notional_usd, leverage, title, tx_hash
-        )
-        color = (
-            hikari.Color(0x00CC66) if direction == "LONG" else hikari.Color(0xFF4444)
-        )
+    message = format_message(
+        coin, direction, notional_usd, leverage, title, tx_hash
+    )
+    color = (
+        hikari.Color(0x00CC66) if direction == "LONG" else hikari.Color(0xFF4444)
+    )
 
-        async with rest.acquire(DISCORD_BOT_TOKEN, "Bot") as client:
-            await client.create_message(
-                CHANNEL_ID,
-                embed=hikari.Embed(description=message, color=color),
-            )
-    finally:
-        await rest.close()
+    async with rest.acquire(DISCORD_BOT_TOKEN, "Bot") as client:
+        await client.create_message(
+            CHANNEL_ID,
+            embed=hikari.Embed(description=message, color=color),
+        )
 
 
 def format_message(
