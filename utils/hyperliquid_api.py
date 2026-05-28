@@ -89,7 +89,8 @@ async def get_fill_info(
                 "user": user,
                 "startTime": trade_time_ms - 2000,
                 "endTime": trade_time_ms + 2000,
-            }
+            },
+            weight=20.0,
         )
     except Exception:
         return None

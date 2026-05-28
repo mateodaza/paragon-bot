@@ -49,7 +49,7 @@ uv run pytest
 ### Position Modes
 
 - **`trade_activity`** — Reports all trades above threshold. Direction inferred from taker side.
-- **`strict_open`** — Only reports confirmed position opens via `userFillsByTime`. More accurate but adds one REST call per trade.
+- **`strict_open`** — Only reports confirmed position activity via `userFillsByTime`: new opens (`startPosition == 0`), increases (adding to existing), and flips (reversing direction). Closes are filtered out. Adds one REST call per trade.
 
 ## Deploy (systemd)
 

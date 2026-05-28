@@ -26,6 +26,7 @@ AGGREGATE_WINDOW_S = 0.5
 ZERO_HASH = "0x" + "0" * 64
 
 _OPEN_DIRS = {"Open Long", "Open Short", "Long > Short", "Short > Long"}
+_FLIP_DIRS = {"Long > Short", "Short > Long"}
 _SKIP_DIRS = {"Close Long", "Close Short"}
 
 
@@ -154,7 +155,9 @@ async def trade_monitor(dry_run: bool = False):
                         fill_dir = fill["dir"]
                         if fill_dir in _SKIP_DIRS or fill_dir not in _OPEN_DIRS:
                             return
-                        if fill["start_position"] in ("0.0", "0", ""):
+                        if fill_dir in _FLIP_DIRS:
+                            title = "Paragon Position Flipped!"
+                        elif fill["start_position"] in ("0.0", "0", ""):
                             title = "New Paragon Position!"
                         else:
                             title = "Paragon Position Increased!"
@@ -216,13 +219,14 @@ async def trade_monitor(dry_run: bool = False):
 # ---------------------------------------------------------------------------
 
 async def _fetch_one_trade(timeout_s: float = 15) -> dict | None:
-    try:
-        async with connect(HYPERLIQUID_WS) as ws:
-            for coin in COINS:
-                await ws.send(json.dumps({
-                    "method": "subscribe",
-                    "subscription": {"type": "trades", "coin": coin},
-                }))
+    """Returns a trade dict on success, None on clean timeout. Raises on connection error."""
+    async with connect(HYPERLIQUID_WS) as ws:
+        for coin in COINS:
+            await ws.send(json.dumps({
+                "method": "subscribe",
+                "subscription": {"type": "trades", "coin": coin},
+            }))
+        try:
             while True:
                 raw = await asyncio.wait_for(ws.recv(), timeout=timeout_s)
                 data = json.loads(raw)
@@ -230,8 +234,8 @@ async def _fetch_one_trade(timeout_s: float = 15) -> dict | None:
                     for t in data["data"]:
                         if validate_trade(t) and t.get("coin") in COINS:
                             return t
-    except (TimeoutError, Exception):
-        return None
+        except TimeoutError:
+            return None
 
 
 async def smoke_test() -> int:
@@ -253,7 +257,11 @@ async def smoke_test() -> int:
     print(f"[green]  OK: all tickers found — {', '.join(sorted(found))}[/green]")
 
     print("\n2. Connecting to Hyperliquid WS (15s timeout)...")
-    trade = await _fetch_one_trade(timeout_s=15)
+    try:
+        trade = await _fetch_one_trade(timeout_s=15)
+    except Exception as e:
+        print(f"[red]  FAIL: WebSocket connection error — {e}[/red]")
+        return 1
     if trade:
         taker = get_taker(trade)
         coin = trade["coin"]
@@ -271,7 +279,7 @@ async def smoke_test() -> int:
         ("para:BTCD", "LONG", 2500.0, "5", "Paragon Trade!"),
         ("para:AVGO", "SHORT", 150.0, "20", "New Paragon Position!"),
         ("para:OTHERS", "LONG", 50000.0, None, "Paragon Trade!"),
-        ("para:TOTAL2", "SHORT", 100.0, "3.2", "Paragon Position Increased!"),
+        ("para:TOTAL2", "SHORT", 100.0, "3.2", "Paragon Position Flipped!"),
     ]
     for coin, direction, size, leverage, title in samples:
         msg = format_message(coin, direction, size, leverage, title)
